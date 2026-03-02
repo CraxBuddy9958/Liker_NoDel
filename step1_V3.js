@@ -15,7 +15,6 @@
     // CONFIGURATION
     // ============================================
     const DB_URL = "https://craxlinks-bb690-default-rtdb.firebaseio.com/links.json";
-    const DOMAIN_EXCLUSION = "craxpro.to";
     const REDIRECT_DELAY = 3000;  // 3 seconds before redirect
 
     // Store used links in sessionStorage to avoid repeats
@@ -70,7 +69,14 @@
                     links = parsed;
                 } else if (parsed && typeof parsed === 'object') {
                     // Handle object format {link1: true, link2: true}
-                    links = Object.keys(parsed);
+                    links = Object.keys(parsed).map(key => {
+                        // If value is the link itself
+                        if (typeof parsed[key] === 'string') {
+                            return parsed[key];
+                        }
+                        // If key is the link
+                        return key;
+                    }).filter(link => link.startsWith('http'));
                 }
             } catch (e) {
                 // If not JSON, treat as whitespace-separated string
@@ -86,31 +92,28 @@
 
             // Get used links
             const usedLinks = getUsedLinks();
-            console.log(`[Step1] 📝 ${usedLinks.length} links already used`);
+            console.log(`[Step1] 📝 ${usedLinks.length} links already used this session`);
 
-            // Find first unused link (excluding domain)
+            // Find first unused link
             let targetLink = null;
             for (const link of links) {
-                if (!link || usedLinks.includes(link)) continue;
-                
-                // Skip if it's our own domain
-                if (link.includes(DOMAIN_EXCLUSION)) {
-                    console.log(`[Step1] ⏭️ Skipping excluded domain: ${link}`);
+                if (!link || usedLinks.includes(link)) {
                     continue;
                 }
-
                 targetLink = link;
                 break;
             }
 
             if (!targetLink) {
-                console.log('[Step1] ⚠️ No unused links available');
+                console.log('[Step1] ⚠️ No unused links available - all links processed');
+                console.log('[Step1] ℹ️ Clearing used links history for fresh start...');
+                sessionStorage.removeItem('__usedLinks');
                 return;
             }
 
             console.log(`[Step1] ✅ Found target link: ${targetLink}`);
 
-            // Mark as used
+            // Mark as used locally
             saveUsedLink(targetLink);
 
             // ============================================
@@ -119,15 +122,16 @@
             try {
                 console.log('[Step1] 🗑️ Removing link from Firebase...');
                 
-                // Find the key for this link in the database
                 const deleteResponse = await fetch(DB_URL);
                 if (deleteResponse.ok) {
                     const dbData = await deleteResponse.json();
                     
-                    if (dbData && typeof dbData === 'object') {
+                    if (dbData && typeof dbData === 'object' && !Array.isArray(dbData)) {
                         // Find and delete the specific key
                         for (const [key, value] of Object.entries(dbData)) {
-                            if (value === targetLink || (typeof value === 'object' && value.url === targetLink)) {
+                            if (value === targetLink || 
+                                (typeof value === 'object' && value.url === targetLink) ||
+                                (typeof value === 'string' && value.includes(targetLink))) {
                                 await fetch(`https://craxlinks-bb690-default-rtdb.firebaseio.com/links/${key}.json`, {
                                     method: 'DELETE'
                                 });
